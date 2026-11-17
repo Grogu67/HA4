@@ -1,0 +1,40 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_LEFT_RIGHT()
+title Вариант A: Kafka + Orchestrator + PostgreSQL (C4 Container)
+
+Person(client, "Клиент банка", "Получает уведомления, задаёт настройки")
+System_Ext(bank, "Банковские сервисы", "Источники событий; пишут событие в Outbox")
+System_Ext(push, "Push-провайдер", "Доставка push")
+System_Ext(sms, "SMS-провайдер", "Доставка SMS")
+System_Ext(mail, "Email-провайдер", "Доставка email")
+System_Boundary(np, "Notification Platform") {
+  Container(prefs, "Preferences Service", "Java, gRPC/REST", "Настройки пользователя и контакты")
+  ContainerQueue(kafka, "Kafka", "RF=3", "events.*, send.push/sms/email, delivery.results")
+  Container(orch, "Orchestrator", "Java, stateless, N экземпляров", "Машина состояний доставки, failover, таймеры")
+  Container(padp, "Push Adapter", "Java", "Вызов push-провайдера, приём receipt")
+  Container(sadp, "SMS Adapter", "Java", "Вызов SMS-провайдера, circuit breaker")
+  Container(eadp, "Email Adapter", "Java", "Вызов email-провайдера")
+  ContainerDb(pg, "PostgreSQL", "Patroni, партиции по дням", "notifications, attempts, deadlines")
+  ContainerDb(redis, "Redis", "Sentinel", "Кеш настроек, rate limit")
+  Container(obs, "Observability", "Prometheus, Grafana, Jaeger", "Метрики, алерты, трассировка")
+}
+
+Rel(bank, kafka, "Событие (Outbox → Kafka)")
+Rel(kafka, orch, "events.transactional")
+Rel(orch, pg, "Состояние, дедупликация, дедлайны")
+Rel(orch, prefs, "Каналы и настройки (gRPC)")
+Rel(prefs, redis, "Кеш")
+Rel(client, prefs, "Настройки (через приложение)")
+Rel(orch, kafka, "send.push / sms / email")
+Rel(kafka, padp, "send.push")
+Rel(kafka, sadp, "send.sms")
+Rel(kafka, eadp, "send.email")
+Rel(padp, push, "HTTPS")
+Rel(sadp, sms, "HTTPS")
+Rel(eadp, mail, "SMTP/HTTPS")
+Rel(padp, kafka, "delivery.results")
+Rel(sadp, kafka, "delivery.results")
+Rel(eadp, kafka, "delivery.results")
+Rel(orch, obs, "Метрики, трассы")
+@enduml

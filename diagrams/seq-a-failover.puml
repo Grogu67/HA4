@@ -1,0 +1,26 @@
+@startuml
+title Вариант A. Failover: push не доставлен → SMS
+autonumber
+
+participant "Orchestrator" as orch
+database "PostgreSQL" as pg
+queue "Kafka" as kafka
+participant "Push Adapter" as padp
+participant "Push-провайдер" as push
+participant "SMS Adapter" as sadp
+participant "SMS-провайдер" as sms
+
+padp -> push : send(idempotency_key)
+push --> padp : timeout / 5xx / токен недействителен
+padp -> kafka : delivery.results(FAILED)\nпосле 3 retry с backoff
+kafka -> orch : consume delivery.results
+orch -> pg : attempt#1 = FAILED;\nпри тишине то же делает таймер по дедлайну
+orch -> pg : UPDATE: следующий канал = sms\nWHERE state NOT IN (DELIVERED), attempt=1
+orch -> kafka : send.sms(notification_id, attempt=2)
+kafka -> sadp : consume send.sms
+sadp -> sms : send(idempotency_key = notification_id)
+sms --> sadp : accepted, затем receipt DELIVERED
+sadp -> kafka : delivery.results(DELIVERED)
+kafka -> orch : consume delivery.results
+orch -> pg : UPDATE state = DELIVERED, дедлайн снят;\nпоздний push-receipt игнорируется
+@enduml

@@ -1,0 +1,25 @@
+@startuml
+title Вариант B. Основной сценарий: транзакционное уведомление доставлено push
+autonumber
+
+participant "Банковский сервис" as bank
+queue "RabbitMQ" as rmq
+participant "Router" as router
+database "Redis" as redis
+participant "Preferences" as prefs
+participant "Push Adapter" as padp
+participant "Push-провайдер" as push
+
+bank -> rmq : TransactionCompleted(event_id)\n(из Outbox, publisher confirms)
+rmq -> router : consume events
+router -> redis : SET dedup:{event_id} NX EX 7d
+router -> prefs : Каналы, контакты, запреты
+prefs --> router : push → sms → email
+router -> rmq : push.q(notification_id)
+router -> rmq : check.delay(notification_id, TTL 30 с)
+rmq -> padp : consume push.q
+padp -> push : send(idempotency_key = notification_id)
+push --> padp : 202 Accepted, затем receipt DELIVERED
+padp -> redis : SET delivered:{notification_id}
+padp -> rmq : status(DELIVERED) → Status Writer → PostgreSQL
+@enduml

@@ -1,0 +1,26 @@
+@startuml
+title Вариант A. Основной сценарий: транзакционное уведомление доставлено push
+autonumber
+
+participant "Банковский сервис" as bank
+queue "Kafka" as kafka
+participant "Orchestrator" as orch
+database "PostgreSQL" as pg
+participant "Preferences" as prefs
+participant "Push Adapter" as padp
+participant "Push-провайдер" as push
+
+bank -> kafka : TransactionCompleted(event_id)\n(из Outbox, acks=all)
+kafka -> orch : consume events.transactional
+orch -> pg : INSERT notification\n(UNIQUE event_id) → дедупликация
+orch -> prefs : Каналы, контакты, запреты
+prefs --> orch : push → sms → email
+orch -> pg : attempt#1 = push, дедлайн = +30 с
+orch -> kafka : send.push(notification_id)
+kafka -> padp : consume send.push
+padp -> push : send(idempotency_key = notification_id)
+push --> padp : 202 Accepted, затем receipt DELIVERED
+padp -> kafka : delivery.results(DELIVERED)
+kafka -> orch : consume delivery.results
+orch -> pg : UPDATE state = DELIVERED\n(WHERE state != DELIVERED), дедлайн снят
+@enduml
